@@ -12,10 +12,8 @@ on:
         required: true
         type: choice
         options:
-          - both
-          - source
           - binary
-        default: both
+        default: binary
       main_ref:
         description: 'Main ref or branch to verify ancestry against (default: origin/main)'
         required: false
@@ -174,67 +172,14 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
-          name: clipvault-client-${{ matrix.platform }}
+          name: clipvault-client-${{ needs.guard.outputs.version }}-${{ matrix.platform }}
           path: src/dist/clipvault-client-${{ matrix.artifact }}.zip
-          retention-days: 1
-          if-no-files-found: error
-
-  source:
-    name: Build source package
-    needs: guard
-    if: inputs.channel == 'both' || inputs.channel == 'source'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - name: Checkout release scripts from public repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          path: tools
-          persist-credentials: false
-
-      - name: Checkout private repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: SimileciWH/clipvault
-          ref: ${{ needs.guard.outputs.sha }}
-          ssh-key: ${{ secrets.CLIPVAULT_DEPLOY_KEY }}
-          path: src
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r src/requirements.txt
-
-      - name: Build and gate source package
-        env:
-          TARGET_COMMIT: ${{ needs.guard.outputs.sha }}
-        run: |
-          python src/scripts/release.py build --commit "$TARGET_COMMIT" --channel source --root src
-          python src/scripts/release.py package --commit "$TARGET_COMMIT" --channel source --root src
-          python src/scripts/release.py gate --commit "$TARGET_COMMIT" --channel source --root src
-
-      - name: Leak scan
-        run: |
-          python tools/.github/scripts/leak_scan.py --src src --dir src/dist
-
-      - name: Upload source artifact
-        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
-        with:
-          name: clipvault-client-source
-          path: src/dist/clipvault-client-${{ needs.guard.outputs.version }}.zip
           retention-days: 1
           if-no-files-found: error
 
   publish:
     name: Sign, publish and register release
-    needs: [guard, build, source]
+    needs: [guard, build]
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && inputs.dry_run == false }}
     runs-on: ubuntu-24.04
     environment: release
