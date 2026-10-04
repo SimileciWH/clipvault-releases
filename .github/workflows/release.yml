@@ -247,6 +247,7 @@ jobs:
           TARGET_COMMIT: ${{ needs.guard.outputs.sha }}
           CHANNEL: ${{ inputs.channel }}
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           python src/scripts/release.py register --commit "$TARGET_COMMIT" --channel "$CHANNEL" --root src
 
