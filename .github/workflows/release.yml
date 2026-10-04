@@ -1,0 +1,294 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'SimileciWH/clipvault commit SHA (40-hex lowercase)'
+        required: true
+        type: string
+      channel:
+        description: 'Release channel to build and publish'
+        required: true
+        type: choice
+        options:
+          - both
+          - source
+          - binary
+        default: both
+      dry_run:
+        description: 'Dry run (build and gate only; do not sign, publish or register)'
+        required: true
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: clipvault-release
+  cancel-in-progress: false
+
+env:
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: '1'
+
+jobs:
+  guard:
+    name: Guard target commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Checkout private repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: SimileciWH/clipvault
+          ssh-key: ${{ secrets.CLIPVAULT_DEPLOY_KEY }}
+          path: src
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: '3.11'
+
+      - name: Verify commit and ancestry
+        id: check
+        env:
+          TARGET_COMMIT: ${{ inputs.sha }}
+        run: |
+          python src/scripts/release.py guard --commit "$TARGET_COMMIT" --root src
+
+  build:
+    name: Build binary (${{ matrix.platform }})
+    needs: guard
+    if: inputs.channel == 'both' || inputs.channel == 'binary'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            platform: macos-arm64
+            pyarch: arm64
+          - runner: windows-2025
+            platform: windows-x64
+            pyarch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout release scripts from public repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: tools
+          persist-credentials: false
+
+      - name: Checkout private repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: SimileciWH/clipvault
+          ref: ${{ needs.guard.outputs.sha }}
+          ssh-key: ${{ secrets.CLIPVAULT_DEPLOY_KEY }}
+          path: src
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: '3.11'
+          architecture: ${{ matrix.pyarch }}
+
+      - name: Set up Go
+        uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version: '1.24.0'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4.0.3
+        with:
+          node-version: '20'
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r src/requirements.txt 'pyinstaller==6.12.0' 'cryptography==46.0.7'
+
+      - name: Build binary package
+        shell: bash
+        env:
+          TARGET_COMMIT: ${{ needs.guard.outputs.sha }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
+        run: |
+          python src/scripts/release.py build --commit "$TARGET_COMMIT" --channel binary --platform "$TARGET_PLATFORM" --root src
+
+      - name: Smoke test binary package
+        shell: bash
+        timeout-minutes: 10
+        env:
+          TARGET_COMMIT: ${{ needs.guard.outputs.sha }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
+        run: |
+          python src/scripts/release.py smoke --commit "$TARGET_COMMIT" --channel binary --platform "$TARGET_PLATFORM" --root src
+
+      - name: Package binary archive
+        shell: bash
+        env:
+          TARGET_COMMIT: ${{ needs.guard.outputs.sha }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
+        run: |
+          python src/scripts/release.py package --commit "$TARGET_COMMIT" --channel binary --platform "$TARGET_PLATFORM" --root src
+
+      - name: Gate binary archive
+        shell: bash
+        env:
+          TARGET_COMMIT: ${{ needs.guard.outputs.sha }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
+        run: |
+          python src/scripts/release.py gate --commit "$TARGET_COMMIT" --channel binary --platform "$TARGET_PLATFORM" --root src
+
+      - name: Leak scan
+        shell: bash
+        run: |
+          python tools/.github/scripts/leak_scan.py --src src --dir src/dist
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: clipvault-client-${{ matrix.platform }}
+          path: src/dist/clipvault-client-${{ matrix.platform }}.zip
+          retention-days: 1
+          if-no-files-found: error
+
+  source:
+    name: Build source package
+    needs: guard
+    if: inputs.channel == 'both' || inputs.channel == 'source'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout release scripts from public repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: tools
+          persist-credentials: false
+
+      - name: Checkout private repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: SimileciWH/clipvault
+          ref: ${{ needs.guard.outputs.sha }}
+          ssh-key: ${{ secrets.CLIPVAULT_DEPLOY_KEY }}
+          path: src
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r src/requirements.txt
+
+      - name: Build and gate source package
+        env:
+          TARGET_COMMIT: ${{ needs.guard.outputs.sha }}
+        run: |
+          python src/scripts/release.py build --commit "$TARGET_COMMIT" --channel source --root src
+          python src/scripts/release.py package --commit "$TARGET_COMMIT" --channel source --root src
+          python src/scripts/release.py gate --commit "$TARGET_COMMIT" --channel source --root src
+
+      - name: Leak scan
+        run: |
+          python tools/.github/scripts/leak_scan.py --src src --dir src/dist
+
+      - name: Upload source artifact
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: clipvault-client-source
+          path: src/dist/clipvault-client-${{ needs.guard.outputs.version }}.zip
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    name: Sign, publish and register release
+    needs: [guard, build, source]
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && inputs.dry_run == false }}
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+    timeout-minutes: 20
+    steps:
+      - name: Checkout release scripts from public repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: tools
+          persist-credentials: false
+
+      - name: Checkout private repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: SimileciWH/clipvault
+          ref: ${{ needs.guard.outputs.sha }}
+          ssh-key: ${{ secrets.CLIPVAULT_DEPLOY_KEY }}
+          path: src
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: '3.11'
+
+      - name: Install signing dependencies
+        run: |
+          python -m pip install 'cryptography==46.0.7'
+
+      - name: Download all built artifacts
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
+        with:
+          path: artifacts
+
+      - name: Prepare dist directory and gate downloaded archives
+        env:
+          TARGET_COMMIT: ${{ needs.guard.outputs.sha }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          mkdir -p src/dist
+          find artifacts -type f -name "*.zip" -exec cp {} src/dist/ \;
+          python src/scripts/release.py gate --commit "$TARGET_COMMIT" --channel "$CHANNEL" --root src
+
+      - name: Sign artifacts
+        env:
+          TARGET_COMMIT: ${{ needs.guard.outputs.sha }}
+          CHANNEL: ${{ inputs.channel }}
+          RELEASE_SIGN_PRIVATE_KEY: ${{ secrets.RELEASE_SIGN_PRIVATE_KEY }}
+        run: |
+          python src/scripts/release.py sign --commit "$TARGET_COMMIT" --channel "$CHANNEL" --root src
+
+      - name: Publish to GitHub Releases
+        env:
+          TARGET_COMMIT: ${{ needs.guard.outputs.sha }}
+          CHANNEL: ${{ inputs.channel }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python src/scripts/release.py publish --commit "$TARGET_COMMIT" --channel "$CHANNEL" --root src
+
+      - name: Register release on licensing server
+        env:
+          TARGET_COMMIT: ${{ needs.guard.outputs.sha }}
+          CHANNEL: ${{ inputs.channel }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+        run: |
+          python src/scripts/release.py register --commit "$TARGET_COMMIT" --channel "$CHANNEL" --root src
+
+      - name: Leak scan final publish set
+        run: |
+          python tools/.github/scripts/leak_scan.py --src src --dir src/dist/publish
