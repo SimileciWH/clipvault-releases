@@ -129,7 +129,45 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install -r src/requirements.txt 'pyinstaller==6.12.0' 'cryptography==46.0.7'
+          pip install -r src/requirements-dev.txt 'pyinstaller==6.12.0' 'cryptography==46.0.7'
+
+      - name: Verify download regression prerequisites
+        shell: bash
+        env:
+          TARGET_PYTHON_ARCH: ${{ matrix.pyarch }}
+        run: |
+          python - <<'PYTHON'
+          import os
+          import platform
+          import shutil
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          assert sys.version_info[:2] == (3, 11), 'Download regression requires Python 3.11'
+          machine = platform.machine().lower()
+          actual = {'aarch64': 'arm64', 'amd64': 'x64', 'x86_64': 'x64'}.get(machine, machine)
+          assert actual == os.environ['TARGET_PYTHON_ARCH'], f'Unexpected interpreter architecture: {actual}'
+          if os.name == 'nt' and not shutil.which('openssl'):
+              git_root = Path(os.environ['ProgramFiles']) / 'Git'
+              for folder in (git_root / 'usr/bin', git_root / 'mingw64/bin'):
+                  if (folder / 'openssl.exe').is_file():
+                      os.environ['PATH'] = str(folder) + os.pathsep + os.environ['PATH']
+                      with open(os.environ['GITHUB_PATH'], 'a', encoding='utf-8') as path_file:
+                          path_file.write(str(folder) + '\n')
+                      break
+          assert shutil.which('openssl'), 'Real TLS fixtures require openssl on PATH'
+          subprocess.run(['openssl', 'version'], check=True)
+          print(f'Download regression interpreter: Python 3.11 {actual}')
+          PYTHON
+      - name: Download DNS and share regression (offline)
+        shell: bash
+        working-directory: src
+        run: >
+          python -m pytest -q -rs
+          tests/test_dns_policy.py tests/test_networking_doh.py
+          tests/test_provider_network.py tests/test_parser_throttle.py
+          tests/test_download_retry.py
 
       - name: Build binary package
         shell: bash
