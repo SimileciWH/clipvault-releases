@@ -86,9 +86,11 @@ jobs:
         include:
           - runner: macos-15
             platform: macos-arm64
+            artifact: mac-arm64
             pyarch: arm64
           - runner: windows-2025
             platform: windows-x64
+            artifact: windows-x64
             pyarch: x64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -173,7 +175,7 @@ jobs:
         uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: clipvault-client-${{ matrix.platform }}
-          path: src/dist/clipvault-client-${{ matrix.platform }}.zip
+          path: src/dist/clipvault-client-${{ matrix.artifact }}.zip
           retention-days: 1
           if-no-files-found: error
 
