@@ -16,6 +16,11 @@ on:
           - source
           - binary
         default: both
+      main_ref:
+        description: 'Main ref or branch to verify ancestry against (default: origin/main)'
+        required: false
+        type: string
+        default: 'origin/main'
       dry_run:
         description: 'Dry run (build and gate only; do not sign, publish or register)'
         required: true
@@ -45,10 +50,18 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: SimileciWH/clipvault
+          ref: ${{ inputs.sha }}
           ssh-key: ${{ secrets.CLIPVAULT_DEPLOY_KEY }}
           path: src
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Fetch remote branches for ancestry verification
+        env:
+          MAIN_REF: ${{ inputs.main_ref || 'origin/main' }}
+        run: |
+          BRANCH="${MAIN_REF#origin/}"
+          git -C src fetch origin "$BRANCH" || true
 
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
@@ -59,8 +72,9 @@ jobs:
         id: check
         env:
           TARGET_COMMIT: ${{ inputs.sha }}
+          MAIN_REF: ${{ inputs.main_ref || 'origin/main' }}
         run: |
-          python src/scripts/release.py guard --commit "$TARGET_COMMIT" --root src
+          python src/scripts/release.py guard --commit "$TARGET_COMMIT" --main-ref "$MAIN_REF" --root src
 
   build:
     name: Build binary (${{ matrix.platform }})

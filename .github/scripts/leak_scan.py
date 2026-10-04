@@ -34,7 +34,7 @@ CODE_LINE_MIN = 30
 COMMENT_LINE_MIN = 40
 CREDENTIAL = re.compile(
     rb"ghs_[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
-    rb"|x-access-token:|-----BEGIN [A-Z ]*PRIVATE KEY-----|vk1\.a\.")
+    rb"|x-access-token:|-----BEGIN [A-Z ]*PRIVATE KEY-----|vk1\.a\.[A-Za-z0-9_-]{20,}")
 TRACEBACK = re.compile(rb'Traceback \(most recent call last\)|File "[^"]+\.py", line \d+')
 BINARY_ZIP = re.compile(r"clipvault-client-.+-(?:mac-arm64|macos-arm64|windows-x64)\.zip")
 
