@@ -167,7 +167,7 @@ jobs:
           python -m pytest -q -rfs --tb=line --timeout=60
           tests/test_dns_policy.py tests/test_networking_doh.py
           tests/test_provider_network.py tests/test_parser_throttle.py
-          tests/test_download_retry.py tests/test_binary_release.py
+          tests/test_download_retry.py tests/test_binary_release.py tests/test_perf_downloader.py
 
       - name: Build binary package
         shell: bash
