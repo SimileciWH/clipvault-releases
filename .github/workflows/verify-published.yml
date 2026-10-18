@@ -1,0 +1,112 @@
+name: 校验正式发行资产
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 已发布的正式版本号
+        required: true
+        type: string
+        default: '1.8.8'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: 实际下载并核对正式资产
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: 设置 Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38
+        with:
+          python-version: '3.11'
+      - name: 校验输入版本
+        run: |
+          python - <<'PY'
+          import os, re
+          assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', os.environ['RELEASE_VERSION'])
+          PY
+      - name: 下载两平台正式 ZIP、签名及清单
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh api "repos/SimileciWH/clipvault-releases/releases/tags/v${RELEASE_VERSION}" > release.json
+          gh api repos/SimileciWH/clipvault-releases/releases/latest > latest.json
+          gh release download "v${RELEASE_VERSION}" -R SimileciWH/clipvault-releases --dir assets \
+            -p "clipvault-client-${RELEASE_VERSION}-macos-arm64.zip" \
+            -p "clipvault-client-${RELEASE_VERSION}-macos-arm64.zip.sig" \
+            -p "clipvault-client-${RELEASE_VERSION}-windows-x64.zip" \
+            -p "clipvault-client-${RELEASE_VERSION}-windows-x64.zip.sig" \
+            -p version.json
+      - name: 安装验签依赖
+        run: python -m pip install 'cryptography==46.0.7'
+      - name: 核对实际字节、签名、Latest 与线上登记
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, urllib.request, zipfile
+          from pathlib import Path
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+          version = os.environ['RELEASE_VERSION']
+          release = json.loads(Path('release.json').read_text())
+          latest = json.loads(Path('latest.json').read_text())
+          metadata = json.loads(Path('assets/version.json').read_text())
+          assert release['tag_name'] == latest['tag_name'] == 'v' + version
+          assert not release['draft'] and not release['prerelease']
+          assert metadata['version'] == version
+          request = urllib.request.Request(
+              'https://clipvault-server.vercel.app/api/release-manifest',
+              headers={'Cache-Control': 'no-cache'})
+          with urllib.request.urlopen(request, timeout=45) as response:
+              manifest = json.load(response)
+          assets = {item['name']: item for item in release['assets']}
+          assert len(assets) == 13
+          assert all(name.endswith(('.zip', '.sig', '.json')) for name in assets)
+          public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(
+              '6fb90cf805f181f9351c48d1b0f22a5318787771ef5b93611732ec89a0d50f48'))
+          results = []
+          for platform, arch in [('macos', 'arm64'), ('windows', 'x64')]:
+              filename = f'clipvault-client-{version}-{platform}-{arch}.zip'
+              info = metadata['binaries'][platform]
+              assert info == manifest['binaries'][platform] and info['version'] == version
+              path = Path('assets') / filename
+              with path.open('rb') as stream:
+                  digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+              assert path.stat().st_size == info['size'] == assets[filename]['size']
+              assert digest == info['sha256']
+              assert assets[filename]['digest'] == 'sha256:' + digest
+              aliases = [item for name, item in assets.items()
+                         if name.endswith(f'-{platform}-{arch}.zip')]
+              assert len(aliases) == 3
+              assert all(item['size'] == info['size'] and
+                         item['digest'] == 'sha256:' + digest for item in aliases)
+              signature = (Path('assets') / (filename + '.sig')).read_text().strip()
+              assert signature == info['sig'] and info['kid'] == 'release-2026-01'
+              message = f"{filename}\n{version}\n{info['size']}\n{digest}\n".encode()
+              public_key.verify(bytes.fromhex(signature), message)
+              with zipfile.ZipFile(path) as archive:
+                  assert not any(Path(name).name == 'deepseek_credentials.json'
+                                 for name in archive.namelist())
+              results.append({'platform': platform, 'architecture': arch,
+                              'bytes': info['size'], 'sha256': digest,
+                              'signature_verified': True, 'registered': True})
+          report = {'version': version, 'latest': True, 'draft': False,
+                    'prerelease': False, 'asset_count': len(assets),
+                    'execution': 'GitHub-hosted Ubuntu; actual public asset download',
+                    'platforms': results, 'result': 'PASS'}
+          Path('verification.json').write_text(json.dumps(report, indent=2) + '\n')
+          print('PUBLISHED_ASSET_VERIFICATION=' + json.dumps(report, separators=(',', ':')))
+          PY
+      - name: 保存验签报告
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1
+        with:
+          name: published-verification-${{ inputs.version }}
+          path: verification.json
+          if-no-files-found: error
+          retention-days: 14
