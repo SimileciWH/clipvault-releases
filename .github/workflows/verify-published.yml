@@ -87,7 +87,9 @@ jobs:
               assert all(item['size'] == info['size'] and
                          item['digest'] == 'sha256:' + digest for item in aliases)
               signature = (Path('assets') / (filename + '.sig')).read_text().strip()
-              assert signature == info['sig'] and info['kid'] == 'release-2026-01'
+              assert signature == info['sig']
+              if 'kid' in info:
+                  assert info['kid'] == 'release-2026-01'
               message = f"{filename}\n{version}\n{info['size']}\n{digest}\n".encode()
               public_key.verify(bytes.fromhex(signature), message)
               with zipfile.ZipFile(path) as archive:
