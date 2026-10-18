@@ -169,6 +169,18 @@ jobs:
           tests/test_provider_network.py tests/test_parser_throttle.py
           tests/test_download_retry.py tests/test_binary_release.py tests/test_perf_downloader.py
 
+      - name: Runtime and browser recovery regression
+        shell: bash
+        working-directory: src
+        env:
+          CLIPVAULT_REAL_CHROME_TESTS: '1'
+        run: >
+          python -m pytest -q -rfs --tb=short --timeout=180
+          tests/test_parser_guard.py tests/test_windows_job.py
+          tests/test_provider_channels.py tests/test_job_feedback.py
+          tests/test_vk_local_cdp_upload.py tests/test_customer_feedback_browser.py
+          tests/test_browser_diagnostics.py tests/test_browser_attach_feedback.py
+
       - name: Build binary package
         shell: bash
         env:
