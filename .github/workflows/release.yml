@@ -183,6 +183,9 @@ jobs:
           tests/test_download_diagnostics.py tests/test_vk_failure_diagnostics.py
           tests/test_job_diagnostics.py tests/test_logsetup.py
           tests/test_vk_browser_client.py tests/test_vk_session_pool_lifecycle.py
+          tests/test_vk_bootstrap_cleanup.py tests/test_vk_close_failures.py
+          tests/test_vk_evicted_reconnect.py tests/test_vk_generation_close_deadline.py
+          tests/test_vk_cdp_stop_barrier.py
 
       - name: Build binary package
         shell: bash
