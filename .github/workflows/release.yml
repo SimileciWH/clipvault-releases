@@ -180,6 +180,9 @@ jobs:
           tests/test_provider_channels.py tests/test_job_feedback.py
           tests/test_vk_local_cdp_upload.py tests/test_customer_feedback_browser.py
           tests/test_browser_diagnostics.py tests/test_browser_attach_feedback.py
+          tests/test_download_diagnostics.py tests/test_vk_failure_diagnostics.py
+          tests/test_job_diagnostics.py tests/test_logsetup.py
+          tests/test_vk_browser_client.py tests/test_vk_session_pool_lifecycle.py
 
       - name: Build binary package
         shell: bash
